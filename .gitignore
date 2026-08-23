@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Experiment artifacts that are regenerated (raw compact summaries ARE committed)
+experiments/results/**/*.tmp
+
+# Data: large datasets are never committed
+data/raw/
+data/*.bin
+!tests/fixtures/*
+*.npz.large
+
+# Checkpoints from full runs (small test fixtures under tests/fixtures are kept)
+checkpoints/
+*.tzckpt
+!tests/fixtures/*.tzckpt
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets — never commit credentials
+.env
+*.key
+*.pem
