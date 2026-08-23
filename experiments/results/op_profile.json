@@ -1,8 +1,17 @@
 {
  "name": "op_profile",
- "forward_wall_ms_median": 22.142125002574176,
- "backward_wall_ms_median": 25.905832997523248,
- "per_op_backward_ms": {
-  "composite": 0.043000036384910345
- }
+ "config": {
+  "batch": 8,
+  "seq": 64,
+  "dim": 128,
+  "layers": 4
+ },
+ "forward_wall_ms_median": 19.79987497907132,
+ "backward_wall_ms_median": 21.230041980743408,
+ "forward_stage_ms": {
+  "rmsnorm": 0.0006864180322736502,
+  "attention": 0.004639334045350552,
+  "mlp": 0.013166000018827617
+ },
+ "note": "backward time is dominated by the same primitives (matmul, softmax, elementwise) executed on saved activations; module wrappers only capture the forward pass, so stage numbers refer to forward-side cost."
 }

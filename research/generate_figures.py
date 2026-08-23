@@ -95,19 +95,23 @@ def fig_kv_cache(data):
 
 
 def fig_op_profile(data):
-    profile = data["per_op_backward_ms"]
+    profile = data["forward_stage_ms"]
     items = sorted(profile.items(), key=lambda kv: -kv[1])[:10]
-    labels = [k.replace("composite", "op") for k, _ in items]
+    labels = [k for k, _ in items]
     vals = [v for _, v in items]
+    total = sum(vals)
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
     y = range(len(items))[::-1]
-    ax.barh(y, vals, color="#ff7f0e")
+    bars = ax.barh(y, vals, color="#ff7f0e")
+    for rect, v in zip(bars, vals):
+        ax.text(rect.get_width() + max(vals) * 0.01, rect.get_y() + 0.35,
+                f"{100 * v / total:.0f}%", fontsize=9)
     ax.set_yticks(list(y))
-    ax.set_yticklabels(labels, fontsize=8)
-    ax.set_xlabel("median backward time per node type (ms)")
-    ax.set_title("Where backward time goes "
-                 f"(forward {data['forward_wall_ms_median']:.1f} ms / "
-                 f"backward {data['backward_wall_ms_median']:.1f} ms wall)")
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel("median forward time per module type (ms)")
+    ax.set_title("Forward-pass time by module type "
+                 f"(fwd {data['forward_wall_ms_median']:.1f} ms / "
+                 f"bwd {data['backward_wall_ms_median']:.1f} ms wall)")
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURES, "op_profile.png"), dpi=150)
     plt.close(fig)

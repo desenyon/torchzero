@@ -422,37 +422,82 @@ def kv_cache_ablation(results_dir):
 
 
 def op_profile_experiment(results_dir):
-    """Where does time go inside one training step?"""
-    from debugger.trace import backward_trace, forward_trace
+    """Where does time go inside one training step? Instruments real
+    executions by wrapping modules with wall-clock accumulators."""
     tz_model, _, _, cfg = pair_models(
         seed=7, vocab_size=512, dim=128, n_layers=4, n_heads=4,
         block_size=64)
     rng = np.random.default_rng(0)
     ids = rng.integers(0, 512, (8, 64)).astype(np.int64)
 
-    # average over a few runs
-    node_ms = {}
-    fwd_total = []
-    bwd_wall = []
-    for _ in range(5):
-        fwd = forward_trace(tz_model, ids, targets=np.roll(ids, -1, 1))
-        bwd = backward_trace(tz_model, ids, targets=np.roll(ids, -1, 1))
-        fwd_total.append(fwd["wall_ms"])
-        bwd_wall.append(bwd["wall_ms"])
-        for e in bwd["graph_nodes"]:
-            key = e["op"]
-            node_ms[key] = node_ms.get(key, []) + [e["ms"]]
-    profile = {k: float(np.median(v)) for k, v in node_ms.items()}
+    acc = {}
+    originals = []
+
+    def wrap_module(module, label):
+        orig = module.forward
+
+        def wrapped(*args, **kwargs):
+            t0 = time.perf_counter()
+            out = orig(*args, **kwargs)
+            acc[label] = acc.get(label, 0.0) + time.perf_counter() - t0
+            return out
+
+        originals.append((module, orig))
+        module.forward = wrapped
+
+    for blk in tz_model.blocks:
+        wrap_module(blk.attn, "attention")
+        wrap_module(blk.mlp, "mlp")
+        wrap_module(blk.norm_attn, "rmsnorm")
+        wrap_module(blk.norm_mlp, "rmsnorm")
+
+    from torchzero.runtime.trainer import clip_grad_norm
+    from torchzero.optim import AdamW
+    opt = AdamW(tz_model.parameters(), lr=1e-3)
+
+    def step():
+        acc.clear()
+        t0 = time.perf_counter()
+        _, loss = tz_model.forward(ids, targets=np.roll(ids, -1, axis=1))
+        fwd_ms = (time.perf_counter() - t0) * 1000
+        t0 = time.perf_counter()
+        loss.backward()
+        bwd_ms = (time.perf_counter() - t0) * 1000
+        # attention fraction of the step (forward+backward inside wrappers is
+        # included via autograd executing the same closures? No -- backward
+        # does not call module.forward). Measure forward-side breakdown.
+        opt.zero_grad()
+        clip_grad_norm(tz_model.parameters(), 1.0)
+        opt.step()
+        return fwd_ms, bwd_ms, dict(acc)
+
+    repeats = 5
+    fwds, bwds = [], []
+    merged = {}
+    for _ in range(repeats):
+        f, b, a = step()
+        fwds.append(f)
+        bwds.append(b)
+        for k, v in a.items():
+            merged[k] = merged.get(k, []) + [v]
+
+    import statistics
+    profile = {k: float(statistics.median(v)) for k, v in merged.items()}
     entry = {
         "name": "op_profile",
-        "forward_wall_ms_median": float(np.median(fwd_total)),
-        "backward_wall_ms_median": float(np.median(bwd_wall)),
-        "per_op_backward_ms": profile,
+        "config": {"batch": 8, "seq": 64, "dim": 128, "layers": 4},
+        "forward_wall_ms_median": float(statistics.median(fwds)),
+        "backward_wall_ms_median": float(statistics.median(bwds)),
+        "forward_stage_ms": profile,
+        "note": ("backward time is dominated by the same primitives "
+                 "(matmul, softmax, elementwise) executed on saved "
+                 "activations; module wrappers only capture the forward "
+                 "pass, so stage numbers refer to forward-side cost."),
     }
     json.dump(entry, open(os.path.join(results_dir, "op_profile.json"),
                           "w"), indent=1)
     print(f"[profile] fwd {entry['forward_wall_ms_median']:.1f}ms "
-          f"bwd {entry['backward_wall_ms_median']:.1f}ms")
+          f"bwd {entry['backward_wall_ms_median']:.1f}ms stages={profile}")
     return entry
 
 
