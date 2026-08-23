@@ -1,0 +1,59 @@
+{
+ "name": "kv_cache_scaling",
+ "prompt_len": 16,
+ "model": {
+  "vocab_size": 256,
+  "dim": 96,
+  "n_layers": 4,
+  "n_heads": 4,
+  "block_size": 192
+ },
+ "repeats": 3,
+ "rows": [
+  {
+   "new_tokens": 8,
+   "cached_seconds": 0.006679832993540913,
+   "uncached_seconds": 0.009279874968342483,
+   "speedup": 1.3892375718548187,
+   "cached_tokens_per_s": 1197.6347324455007,
+   "uncached_tokens_per_s": 862.0805805349028,
+   "greedy_outputs_match": true
+  },
+  {
+   "new_tokens": 16,
+   "cached_seconds": 0.012179790996015072,
+   "uncached_seconds": 0.020472624979447573,
+   "speedup": 1.6808683323175013,
+   "cached_tokens_per_s": 1313.651441575213,
+   "uncached_tokens_per_s": 781.5314360548473,
+   "greedy_outputs_match": true
+  },
+  {
+   "new_tokens": 32,
+   "cached_seconds": 0.023404125007800758,
+   "uncached_seconds": 0.04715950001263991,
+   "speedup": 2.0150080379813953,
+   "cached_tokens_per_s": 1367.2803400825358,
+   "uncached_tokens_per_s": 678.5483304832156,
+   "greedy_outputs_match": true
+  },
+  {
+   "new_tokens": 64,
+   "cached_seconds": 0.045876082964241505,
+   "uncached_seconds": 0.12193512503290549,
+   "speedup": 2.657923631534733,
+   "cached_tokens_per_s": 1395.0624348178403,
+   "uncached_tokens_per_s": 524.8692694802168,
+   "greedy_outputs_match": true
+  },
+  {
+   "new_tokens": 128,
+   "cached_seconds": 0.09220941603416577,
+   "uncached_seconds": 0.3732342079747468,
+   "speedup": 4.047679987870812,
+   "cached_tokens_per_s": 1388.1445681487992,
+   "uncached_tokens_per_s": 342.9482005268406,
+   "greedy_outputs_match": true
+  }
+ ]
+}

@@ -1,0 +1,53 @@
+{
+ "name": "stability",
+ "rows": [
+  {
+   "logit_scale": 1,
+   "loss": 5.013027191162109,
+   "loss_float64_reference": 5.013026825215121,
+   "abs_error": 3.659469882677513e-07,
+   "grad_abs_max": 0.12486235797405243,
+   "finite": true
+  },
+  {
+   "logit_scale": 10,
+   "loss": 20.225120544433594,
+   "loss_float64_reference": 20.22512140812284,
+   "abs_error": 8.636892445679223e-07,
+   "grad_abs_max": 0.125,
+   "finite": true
+  },
+  {
+   "logit_scale": 100,
+   "loss": 217.5274658203125,
+   "loss_float64_reference": 217.52746923706366,
+   "abs_error": 3.416751155782549e-06,
+   "grad_abs_max": 0.125,
+   "finite": true
+  },
+  {
+   "logit_scale": 1000,
+   "loss": 1257.882568359375,
+   "loss_float64_reference": 1257.8825855255127,
+   "abs_error": 1.71661376953125e-05,
+   "grad_abs_max": 0.125,
+   "finite": true
+  },
+  {
+   "logit_scale": 5000,
+   "loss": 8942.0185546875,
+   "loss_float64_reference": 8942.01872253418,
+   "abs_error": 0.0001678466796875,
+   "grad_abs_max": 0.125,
+   "finite": true
+  },
+  {
+   "logit_scale": 10000,
+   "loss": 21351.9609375,
+   "loss_float64_reference": 21351.95966084575,
+   "abs_error": 0.001276654249522835,
+   "grad_abs_max": 0.125,
+   "finite": true
+  }
+ ]
+}
