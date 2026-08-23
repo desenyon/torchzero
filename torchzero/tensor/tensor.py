@@ -265,6 +265,19 @@ class Tensor:
     __hash__ = object.__hash__
 
     # ------------------------------------------------------------- reductions
+    def _expand_reduction_grad(self, g, out_shape, axis, keepdims):
+        """Expand a reduction output gradient back to input rank."""
+        if keepdims:
+            return g
+        if axis is None:
+            axes = tuple(range(self.ndim))
+        elif isinstance(axis, tuple):
+            axes = axis
+        else:
+            axes = (axis,)
+        return np.expand_dims(
+            g, tuple(sorted(a % self.ndim for a in axes)))
+
     def sum(self, axis=None, keepdims=False):
         out_data = self.data.sum(axis=axis, keepdims=keepdims)
         if not get_grad_mode() or not self.requires_grad:
@@ -273,10 +286,7 @@ class Tensor:
         def bfn(g):
             if axis is None:
                 return (np.broadcast_to(g, self.shape).copy(),)
-            gexp = np.expand_dims(g, axis) if not keepdims else g
-            axes = axis if isinstance(axis, tuple) else (axis,)
-            for ax in sorted(a % self.ndim for a in axes):
-                gexp = np.expand_dims(gexp, ax)
+            gexp = self._expand_reduction_grad(g, out_data.shape, axis, keepdims)
             return (np.broadcast_to(gexp, self.shape).copy(),)
 
         return Tensor(out_data, True, _parents=(self,), _backward_fn=bfn)
@@ -288,11 +298,7 @@ class Tensor:
         n = self.data.size / out_data.size
 
         def bfn(g):
-            gexp = np.broadcast_to(g, out_data.shape).copy()
-            if axis is not None and not keepdims:
-                axes = axis if isinstance(axis, tuple) else (axis,)
-                for ax in sorted(a % self.ndim for a in axes):
-                    gexp = np.expand_dims(gexp, ax)
+            gexp = self._expand_reduction_grad(g, out_data.shape, axis, keepdims)
             return (np.broadcast_to(gexp / n, self.shape).copy(),)
 
         return Tensor(out_data, True, _parents=(self,), _backward_fn=bfn)
@@ -556,9 +562,11 @@ class Tensor:
 
         def make_bfn(start, size_on_axis):
             def bfn(g):
+                gfull = np.zeros_like(self.data)
                 sl = [slice(None)] * g.ndim
                 sl[axis] = slice(start, start + size_on_axis)
-                return (g[tuple(sl)],)
+                gfull[tuple(sl)] = g
+                return (gfull,)
             return bfn
 
         for p, s in zip(parts, starts):
