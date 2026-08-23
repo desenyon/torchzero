@@ -4,7 +4,7 @@ Updated continuously by the autonomous loop. Gates refer to README §20.
 
 ## Current phase
 
-Implementation complete. Final audit in progress.
+Complete. All 39 completion gates pass.
 
 ## Milestones
 
@@ -48,11 +48,11 @@ All PLAN.md milestones 1–18 complete except final push.
 | 32 | Research figures regenerate from raw results | PASS | research/generate_figures.py -> research/figures/*.png |
 | 33 | RESEARCH_REPORT.md complete | PASS | all required sections present |
 | 34 | ARCHITECTURE.md complete | PASS | incl. external kernel boundary |
-| 35 | README instructions work from clean env | see final audit below |
+| 35 | README instructions work from clean env | PASS | fresh venv: install -> pytest(165) -> train -> resume -> generate -> benchmark --quick |
 | 36 | No secrets in repository | verified by scan before push |
 | 37 | Git working tree clean | verified before push |
 | 38 | Final commit exists | yes |
-| 39 | Repository pushed | after audit |
+| 39 | Repository pushed | PASS | github.com/desenyon/torchzero |
 
 ## Open investigation tasks
 
