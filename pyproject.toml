@@ -34,7 +34,7 @@ figures = [
 torchzero = "torchzero.cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["torchzero*", "debugger*"]
+include = ["torchzero*", "debugger*", "benchmarks*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

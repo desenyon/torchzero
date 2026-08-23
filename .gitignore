@@ -33,3 +33,7 @@ checkpoints/
 .env
 *.key
 *.pem
+
+# benchmark scratch checkpoints
+docker/
+experiments/results/_tmp_ckpt/

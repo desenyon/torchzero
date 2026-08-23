@@ -4,21 +4,21 @@
   {
    "prompt_len": 8,
    "new_tokens": 24,
-   "cached_seconds": 0.018641249975189567,
-   "uncached_seconds": 0.029839917027857155,
-   "speedup": 1.6007465737315025,
-   "cached_tokens_per_s": 1287.467312113867,
-   "uncached_tokens_per_s": 804.2917806237436,
+   "cached_seconds": 0.018934667052235454,
+   "uncached_seconds": 0.02913070801878348,
+   "speedup": 1.5384853580165945,
+   "cached_tokens_per_s": 1267.5163462758921,
+   "uncached_tokens_per_s": 823.8728692939698,
    "greedy_outputs_match": true
   },
   {
    "prompt_len": 16,
    "new_tokens": 48,
-   "cached_seconds": 0.03429229196626693,
-   "uncached_seconds": 0.08070400002179667,
-   "speedup": 2.3534151669181105,
-   "cached_tokens_per_s": 1399.7314628960128,
-   "uncached_tokens_per_s": 594.766058522949,
+   "cached_seconds": 0.035579374991357327,
+   "uncached_seconds": 0.08223612495930865,
+   "speedup": 2.311342596076655,
+   "cached_tokens_per_s": 1349.0962112645261,
+   "uncached_tokens_per_s": 583.6850900227963,
    "greedy_outputs_match": true
   }
  ]

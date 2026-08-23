@@ -5,8 +5,8 @@
    "dim": 64,
    "layers": 2,
    "params": 132032,
-   "bytes": 529853,
-   "bytes_per_param": 4.0130650145419295
+   "bytes": 529852,
+   "bytes_per_param": 4.0130574406204556
   },
   {
    "dim": 128,
