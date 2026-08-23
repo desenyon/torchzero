@@ -1,0 +1,27 @@
+# Tiny deterministic configuration: trains in seconds, used by tests and CI.
+out_dir: checkpoints/tiny
+
+model:
+  vocab_size: auto        # set from tokenizer at runtime
+  dim: 48
+  n_layers: 2
+  n_heads: 4
+  block_size: 64
+
+data:
+  text: null              # null -> built-in deterministic dataset
+  val_fraction: 0.1
+
+train:
+  optimizer: adamw
+  lr: 3.0e-3
+  weight_decay: 0.01
+  grad_clip: 1.0
+  batch_size: 8
+  max_steps: 60
+  warmup_steps: 10
+  min_lr_ratio: 0.1
+  eval_every: 20
+  ckpt_every: 30
+  log_every: 10
+  seed: 0

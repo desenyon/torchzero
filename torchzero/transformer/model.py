@@ -252,12 +252,28 @@ class Transformer(Module):
         x = self.norm_f(x)
         logits = self.lm_head(x)                   # (B, T, V)
 
+        if trace is not None:
+            trace.append({
+                "op": "final_norm",
+                "residual_stream": x.detach().data,
+                "norm_mean": float(x.data.mean()),
+                "norm_std": float(x.data.std()),
+                "out_shape": tuple(x.shape),
+            })
+            trace.append({
+                "op": "lm_head",
+                "logits": logits.detach().data,
+                "out_shape": tuple(logits.shape),
+            })
+
         loss = None
         if targets is not None:
             flat_logits = logits.reshape(B * T, self.config.vocab_size)
             tgt = targets.data.astype(np.int64) if isinstance(targets, Tensor) \
                 else np.asarray(targets, dtype=np.int64)
             loss = Tensor.cross_entropy(flat_logits, tgt.reshape(-1))
+        if trace is not None and loss is not None:
+            trace.append({"op": "cross_entropy", "loss": float(loss.item())})
         return logits, loss
 
     # ------------------------------------------------------------- inference
