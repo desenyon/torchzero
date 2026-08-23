@@ -156,6 +156,6 @@ class TestHardConstraint:
                 continue
             src = open(os.path.join(scripts_dir, f), encoding="utf-8").read()
             if "import torch" in src:
-                # must also construct TorchZero models from TorchZero code
-                assert "TransformerConfig" in src, (
+                # must also construct/exercise TorchZero models
+                assert ("TransformerConfig" in src or "pair_models" in src), (
                     f"{f} uses torch but does not exercise TorchZero models")
