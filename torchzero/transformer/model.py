@@ -198,8 +198,12 @@ class Transformer(Module):
             for _ in range(config.n_layers)
         ]
         self.norm_f = RMSNorm(config.dim, eps=config.norm_eps)
-        self.lm_head = Linear(config.dim, config.vocab_size, bias=False,
-                              seed=None if seed is None else int(rng.integers(1 << 30)))
+        # Weight-tied output head: logits = h @ E^T shares the embedding
+        # matrix exactly (gradients flow through the transpose node).
+        self.lm_head = None
+        if not config.tie_weights:
+            self.lm_head = Linear(config.dim, config.vocab_size, bias=False,
+                                  seed=None if seed is None else int(rng.integers(1 << 30)))
         self.kv_caches = None
 
     # ---------------------------------------------------------------- forward
@@ -250,7 +254,10 @@ class Transformer(Module):
                 trace.append({"op": f"block.{i}", "out_shape": tuple(x.shape),
                               "residual_stream": x.detach().data})
         x = self.norm_f(x)
-        logits = self.lm_head(x)                   # (B, T, V)
+        if self.lm_head is not None:
+            logits = self.lm_head(x)               # (B, T, V)
+        else:
+            logits = x @ self.tok_emb.weight.transpose(1, 0)
 
         if trace is not None:
             trace.append({

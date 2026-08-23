@@ -192,8 +192,9 @@ class TestLossParity:
         mlp_out = hidden @ W2 + b2_
         x = x + mlp_out
         xf = rmsnorm_rows(x, model.norm_f.weight.data)
-        Wh = model.lm_head.weight.data.astype(np.float64)
-        ref_logits = xf @ Wh
+        # weight-tied head: logits = h @ E^T
+        Wh = model.tok_emb.weight.data.astype(np.float64)
+        ref_logits = xf @ Wh.T
 
         assert np.allclose(logits.data[0], ref_logits, atol=2e-3), \
             f"max diff {np.abs(logits.data[0] - ref_logits).max()}"

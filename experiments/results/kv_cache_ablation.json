@@ -1,0 +1,25 @@
+{
+ "name": "kv_cache_ablation",
+ "rows": [
+  {
+   "prompt_len": 8,
+   "new_tokens": 24,
+   "cached_seconds": 0.02008370799012482,
+   "uncached_seconds": 0.03513658401789144,
+   "speedup": 1.7495068159310088,
+   "cached_tokens_per_s": 1194.9984540604166,
+   "uncached_tokens_per_s": 683.0487559000976,
+   "greedy_outputs_match": true
+  },
+  {
+   "prompt_len": 16,
+   "new_tokens": 48,
+   "cached_seconds": 0.03865037497598678,
+   "uncached_seconds": 0.090976707986556,
+   "speedup": 2.3538376546949213,
+   "cached_tokens_per_s": 1241.902569634113,
+   "uncached_tokens_per_s": 527.6075718973384,
+   "greedy_outputs_match": true
+  }
+ ]
+}

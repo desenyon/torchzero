@@ -1,0 +1,53 @@
+{
+ "name": "latency_scaling",
+ "rows": [
+  {
+   "batch": 4,
+   "seq": 32,
+   "dim": 64,
+   "layers": 2,
+   "heads": 4,
+   "params": 132032,
+   "tz_forward_ms": 1.5055830008350313,
+   "tz_backward_ms": 3.849416971206665,
+   "tz_step_ms": 4.486250050831586,
+   "tz_tokens_per_s": 28531624.084634673,
+   "torch_forward_ms": 0.7694159867241979,
+   "torch_backward_ms": 1.7182499868795276,
+   "torch_step_ms": 1.738749968353659,
+   "torch_tokens_per_s": 73616.10486250489
+  },
+  {
+   "batch": 8,
+   "seq": 64,
+   "dim": 128,
+   "layers": 4,
+   "heads": 4,
+   "params": 855680,
+   "tz_forward_ms": 20.604791003279388,
+   "tz_backward_ms": 45.51829199772328,
+   "tz_step_ms": 46.17245896952227,
+   "tz_tokens_per_s": 11088861.443094537,
+   "torch_forward_ms": 6.466249993536621,
+   "torch_backward_ms": 14.574999979231507,
+   "torch_step_ms": 14.013875043019652,
+   "torch_tokens_per_s": 36535.21944703143
+  },
+  {
+   "batch": 16,
+   "seq": 64,
+   "dim": 128,
+   "layers": 4,
+   "heads": 8,
+   "params": 855680,
+   "tz_forward_ms": 46.326958981808275,
+   "tz_backward_ms": 117.44329199427739,
+   "tz_step_ms": 118.50737500935793,
+   "tz_tokens_per_s": 8640812.438205976,
+   "torch_forward_ms": 12.051166966557503,
+   "torch_backward_ms": 27.48320798855275,
+   "torch_step_ms": 26.86783403623849,
+   "torch_tokens_per_s": 38112.48791468865
+  }
+ ]
+}

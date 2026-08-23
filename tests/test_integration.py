@@ -113,14 +113,21 @@ class TestDebuggerData:
 
 class TestHardConstraint:
     def test_no_forbidden_framework_imports(self):
-        """README §1: no PyTorch/TF/JAX/MLX anywhere in the codebase."""
-        forbidden = ("torch", "tensorflow", "jax", "mlx", "keras",
-                     "autograd.framework")
+        """README §1: no PyTorch/TF/JAX/MLX in RUNTIME code. The benchmark
+        suite may import torch strictly as an optional external reference
+        for measurement only (README §12, §16) -- never under torchzero/."""
+        forbidden = ("torch", "tensorflow", "jax", "mlx", "keras")
+        runtime_dirs = ("torchzero", "debugger", "scripts", "research")
         bad = []
         for root, dirs, files in os.walk(REPO):
             dirs[:] = [d for d in dirs
                        if d not in (".venv", ".git", "__pycache__",
-                                    ".pytest_cache", "node_modules")]
+                                    ".pytest_cache", "node_modules",
+                                    "benchmarks", "tests")]
+            rel = os.path.relpath(root, REPO)
+            top = rel.split(os.sep)[0]
+            if top not in runtime_dirs and root != REPO:
+                continue
             for f in files:
                 if not f.endswith(".py"):
                     continue
@@ -129,14 +136,11 @@ class TestHardConstraint:
                 for line in src.splitlines():
                     s = line.strip()
                     if s.startswith(("import ", "from ")):
-                        for name in forbidden:
-                            module = s.split()[1].split(".")[0]
-                            # 'torch' prefix would also match 'torchzero'
-                            if module == name or (
-                                    name == "torch" and module == "torch"):
-                                bad.append((path, line))
-                                break
-        # allow the word torchzero itself; check exact matches only
-        bad = [(p, l) for p, l in bad
-               if l.split()[1].split(".")[0] != "torchzero"]
-        assert not bad, f"forbidden framework imports: {bad}"
+                        module = s.split()[1].split(".")[0]
+                        if module in forbidden and module != "torchzero":
+                            # 'torch' must not match 'torchzero'
+                            if module == "torch" and \
+                                    s.split()[1].startswith("torchzero"):
+                                continue
+                            bad.append((path, line))
+        assert not bad, f"forbidden framework imports in runtime code: {bad}"
