@@ -84,17 +84,19 @@ class TestAdam:
                                atol=1e-6)
 
     def test_adam_state_dict_roundtrip(self):
-        # run two steps; snapshot after one
+        # run two steps; snapshot params + optimizer state after one
         params = make_params()
         opt = Adam(params, lr=0.02)
         opt.step()
         sd = opt.state_dict()
+        param_snapshot = [p.data.copy() for p in params]
         opt.step()
         expected = [p.data.copy() for p in params]
 
-        # fresh optimizer+params: advance to same point, restore snapshot,
-        # take the "second" step again -> must match
+        # fresh run: restore params + optimizer snapshot -> next step matches
         params_b = make_params()
+        for pb, snap in zip(params_b, param_snapshot):
+            pb.data = snap.copy()
         opt_b = Adam(params_b, lr=0.02)
         opt_b.load_state_dict(sd)
         opt_b.step()
