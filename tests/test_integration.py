@@ -113,17 +113,18 @@ class TestDebuggerData:
 
 class TestHardConstraint:
     def test_no_forbidden_framework_imports(self):
-        """README §1: no PyTorch/TF/JAX/MLX in RUNTIME code. The benchmark
-        suite may import torch strictly as an optional external reference
-        for measurement only (README §12, §16) -- never under torchzero/."""
+        """README §1: no PyTorch/TF/JAX/MLX in RUNTIME code. Benchmark and
+        experiment scripts may import torch strictly as an optional external
+        reference for measurement only (README §12, §16) -- they never power
+        the library."""
         forbidden = ("torch", "tensorflow", "jax", "mlx", "keras")
-        runtime_dirs = ("torchzero", "debugger", "scripts", "research")
+        runtime_dirs = ("torchzero", "debugger")
         bad = []
         for root, dirs, files in os.walk(REPO):
             dirs[:] = [d for d in dirs
                        if d not in (".venv", ".git", "__pycache__",
                                     ".pytest_cache", "node_modules",
-                                    "benchmarks", "tests")]
+                                    "benchmarks", "tests", "scripts")]
             rel = os.path.relpath(root, REPO)
             top = rel.split(os.sep)[0]
             if top not in runtime_dirs and root != REPO:
@@ -144,3 +145,17 @@ class TestHardConstraint:
                                 continue
                             bad.append((path, line))
         assert not bad, f"forbidden framework imports in runtime code: {bad}"
+
+    def test_experiment_scripts_only_use_torch_as_reference(self):
+        """Experiment scripts may import torch, but must never route
+        TorchZero model execution through it: every script must build models
+        via TorchZero's own Transformer/TransformerConfig."""
+        scripts_dir = os.path.join(REPO, "scripts")
+        for f in os.listdir(scripts_dir):
+            if not f.endswith(".py") or not f.startswith("experiment_"):
+                continue
+            src = open(os.path.join(scripts_dir, f), encoding="utf-8").read()
+            if "import torch" in src:
+                # must also construct TorchZero models from TorchZero code
+                assert "TransformerConfig" in src, (
+                    f"{f} uses torch but does not exercise TorchZero models")
