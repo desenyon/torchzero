@@ -7,6 +7,8 @@ by traversal. state_dict/load_state_dict support nested modules and lists.
 
 from __future__ import annotations
 
+import copy
+from contextlib import contextmanager
 import pickle
 
 import numpy as np
@@ -97,6 +99,54 @@ class Module:
                             out[k] = v
         return out
 
+    def named_modules(self):
+        """Yield each reachable module once, including list/dict containers."""
+        seen = set()
+
+        def visit(value, name):
+            if isinstance(value, Module):
+                if id(value) in seen:
+                    return
+                seen.add(id(value))
+                yield name, value
+                for key, child in sorted(vars(value).items()):
+                    if not key.startswith("_"):
+                        yield from visit(child, f"{name}.{key}" if name else key)
+            elif isinstance(value, (list, tuple, dict)):
+                items = value.items() if isinstance(value, dict) else enumerate(value)
+                for key, child in items:
+                    yield from visit(child, f"{name}.{key}")
+
+        yield from visit(self, "")
+
+    @contextmanager
+    def evaluating(self):
+        """Temporarily eval all modules, restoring mixed modes on exit."""
+        modes = [(module, module.training) for _, module in self.named_modules()]
+        self.eval()
+        try:
+            yield self
+        finally:
+            for module, training in modes:
+                module.training = training
+
+    def rng_state_dict(self):
+        """Snapshot persistent random streams owned by modules (e.g. dropout)."""
+        return {name: copy.deepcopy(module._rng.bit_generator.state)
+                for name, module in self.named_modules() if hasattr(module, "_rng")}
+
+    def load_rng_state_dict(self, state):
+        streams = {name: module._rng for name, module in self.named_modules()
+                   if hasattr(module, "_rng")}
+        if set(state) != set(streams):
+            raise ValueError("model RNG state names do not match")
+        # Validate every state on a temporary generator before applying any.
+        for name, rng in streams.items():
+            probe = type(rng.bit_generator)()
+            probe.state = copy.deepcopy(state[name])
+        for name, rng in streams.items():
+            rng.bit_generator.state = copy.deepcopy(state[name])
+
     def zero_grad(self):
         for p in self.parameters():
             p.grad = None
@@ -110,14 +160,8 @@ class Module:
         return self
 
     def _set_mode(self, training):
-        self.training = training
-        for _, value in vars(self).items():
-            if isinstance(value, Module):
-                value._set_mode(training)
-            elif isinstance(value, (list, tuple)):
-                for item in value:
-                    if isinstance(item, Module):
-                        item._set_mode(training)
+        for _, module in self.named_modules():
+            module.training = training
 
     # ----------------------------------------------------------- serialization
     def state_dict(self) -> dict:

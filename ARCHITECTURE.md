@@ -5,7 +5,7 @@
 TorchZero is a compact, transparent ML stack. A training step flows:
 
 ```
-text -> BPE tokenizer -> packed id rows -> batch sampler
+text -> BPE tokenizer -> T+1-token lookahead rows -> epoch/cursor batch sampler
      -> Tensor graph (embedding, RoPE attention blocks, LM head)
      -> fused cross entropy -> reverse-mode autodiff
      -> grad clipping -> AdamW -> checkpoint / resume
@@ -27,7 +27,8 @@ primitive kernels documented below.
 | `torchzero/tokenizer/bpe.py` | byte-level BPE: train/encode/decode/save/load |
 | `torchzero/data/dataset.py` | split, packing, deterministic seeded batching |
 | `torchzero/transformer/model.py` | decoder-only transformer + RoPE + KV cache + generation |
-| `torchzero/runtime/trainer.py` | training loop, eval, LR schedule, checkpoints, resume |
+| `torchzero/runtime/trainer.py` | training state ownership, weighted eval, LR schedule, resume validation |
+| `torchzero/runtime/checkpoint.py` | versioned atomic checkpoint I/O and state restoration |
 | `torchzero/cli/main.py` | `train` / `generate` / `inspect` / `benchmark` commands |
 | `debugger/trace.py` | forward/backward instrumentation (real timings, real grads) |
 | `debugger/report.py` | text + self-contained HTML rendering |
@@ -38,12 +39,12 @@ A `Tensor` wraps a numpy `ndarray` plus:
 
 - `grad` (ndarray or None), `requires_grad`
 - `_parents`, `_backward_fn` — the dynamic computation graph edge
-- memory model: numpy's row-major strided buffers; `.stride` exposes element strides
+- memory model: numpy's row-major strided buffers; `.stride` exposes NumPy byte strides
 
 Operations build nodes eagerly. Broadcasting uses standard numpy semantics in
 the forward pass; gradients are reduced back to operand shapes with
 `unbroadcast()` (sum over leading broadcast dims, then over size-1 expanded
-dims). This path is exhaustively checked by finite differences.
+dims). Representative shapes and both operands are checked by finite differences, including vector/batched matmul and broadcasted tensor powers.
 
 ## Autodiff design
 
@@ -64,18 +65,46 @@ Decoder-only, pre-norm:
 
 ```
 x = E[ids]                                   # tied embedding
-per block: x = x + Attn(RMSNorm(x)); x = x + MLP(GELU)(RMSNorm(x))
+per block: x = x + Dropout(Attn(RMSNorm(x))); x = x + Dropout(MLP(GELU)(RMSNorm(x)))
 logits = RMSNorm(x) @ E^T                    # weight-tied head (real tying)
 ```
 
 Attention is multi-head with RoPE (half-split rotation applied to q/k before
 head transpose) and an additive `-1e30` causal mask via `masked_fill`.
-Softmax is max-shifted for stability. Cross entropy is a fused stable kernel.
+Softmax is max-shifted for stability. Attention probabilities also pass through dropout during training. Cross entropy is a fused stable kernel. Each dropout owns a persistent RNG stream that is captured in checkpoints.
 
 **KV cache**: per layer `{k, v}` of shape `(B, H, T_past, Dh)`. During cached
 decode, new k/v are concatenated onto the cache and RoPE tables are sliced at
-the absolute position offset, so cached generation is numerically identical to
-uncached generation (tested; greedy outputs match exactly).
+the absolute position offset, so cached and uncached logits agree within floating-point tolerance. Tests compare full greedy sequences and seeded sampled sequences. Generation runs under no_grad, restores prior module modes, uses one sampling RNG and clears caches in a finally block. Total context length is bounded by block_size.
+
+## Training state and checkpoint boundary
+
+`pack_lm_sequences(ids, T)` produces T+1-token windows at stride T. Inputs and
+labels are adjacent slices of each row; no row wraps to its beginning. Splits
+are contiguous and occur before packing. Generic `pack_sequences` retains its
+original packing behavior. Training and evaluation share `get_batch`.
+
+`BatchSampler.next_batch()` advances a persistent cursor and consumes each row
+once per epoch, including partial batches. Its state records epoch, cursor,
+seed and sizes. Iterating a sampler remains a non-consuming view of one epoch.
+
+The trainer owns model, optimizer, scheduler, sampler, completed step and
+history. Checkpoint I/O is a separate module; it does not import the trainer.
+Version 2 snapshots all of those states, actual module RNG streams and the
+packed-data fingerprint. CLI metadata additionally binds corpus/tokenizer
+identity. Files are serialized to a sibling temporary file, flushed/fsynced,
+then replaced atomically. Periodic and final files contain equivalent state.
+
+Resume validates the unchanged training plan and dataset before restoration.
+The LR schedule is applied before each optimizer update, including the first.
+Pausing at an absolute step does not change its planned horizon. Evaluation
+weights batches by target-token count and restores module modes. Exact resume
+regressions include stochastic dropout and all three optimizer choices.
+
+Version-1 weights remain loadable for inference, but exact training resume is
+rejected because v1 used circular targets and omitted necessary state. Pickle
+loading is restricted by trust convention, not sandboxing: only load trusted
+local artifacts. See README for migration and security details.
 
 ## External kernel boundary (README §1)
 
@@ -84,7 +113,7 @@ primitives:
 
 - storage/strides/reshape/transpose/broadcast (`ndarray` machinery)
 - elementwise ufuncs: add/sub/mul/div/pow/exp/log/sqrt/tanh/sin/cos/abs/max
-- reductions: `sum`, `mean`, `argmax`, `put_along_axis`, `take_along_axis`
+- reductions and indexing: `sum`, `mean`, `argmax`, `argsort`, `put_along_axis`, `take_along_axis`
 - `matmul` (all batched ranks)
 - `concatenate`, `split`, `tril`, scatter (`np.add.at`)
 - RNG (`np.random.default_rng`) for initialization/dropout/sampling
@@ -113,6 +142,9 @@ not depend on any framework either.
 `torchzero inspect` renders this as text (interactive commands:
 stages/attn/grads/graph/params) or a self-contained HTML page.
 
-## Deviations from README §14 structure
+## Compatibility and limits
 
-None material. All target directories exist as specified.
+The runtime remains NumPy/CPU only. Checkpoint format and data-target semantics
+changed in version 0.2; migration is explicit in README. Grad mode is currently
+process-global and model/cache/RNG instances are not thread-safe. Historical
+experiment artifacts are not regenerated by the reliability upgrade.

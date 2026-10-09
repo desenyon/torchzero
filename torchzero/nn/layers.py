@@ -102,12 +102,12 @@ class Dropout(Module):
             raise ValueError(f"dropout probability must be in [0, 1): {p}")
         self.p = p
         self.seed = seed
+        self._rng = _init_rng(seed)
 
     def forward(self, x: Tensor) -> Tensor:
         if not self.training or self.p == 0.0:
             return x
-        rng = _init_rng(self.seed)
-        mask = (rng.random(x.shape) >= self.p).astype(x.data.dtype)
+        mask = (self._rng.random(x.shape) >= self.p).astype(x.data.dtype)
         mask /= (1.0 - self.p)
         return x * Tensor(mask)
 

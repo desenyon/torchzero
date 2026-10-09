@@ -44,7 +44,7 @@ class TestTrainingStep:
             last = float(loss.item())
         assert last < first * 0.7
 
-    def test_trainer_history_and_schedule(self):
+    def test_trainer_history_and_schedule(self, tmp_path):
         cfg = {
             "model": {"vocab_size": 48, "dim": 24, "n_layers": 2,
                       "n_heads": 3, "block_size": 12},
@@ -54,7 +54,7 @@ class TestTrainingStep:
             "seed": 0, "warmup_steps": 5, "min_lr_ratio": 0.1,
         }
         rows = make_rows()
-        trainer = Trainer(build(), rows, rows[6:], cfg, out_dir="/tmp/tz_test")
+        trainer = Trainer(build(), rows, rows[6:], cfg, out_dir=str(tmp_path))
         final = trainer.fit()
         losses = [s["loss"] for s in trainer.history]
         assert len(trainer.history) == 20
@@ -116,35 +116,23 @@ class TestCheckpoints:
             return Trainer(m, make_rows(8), make_rows(2), cfg_common.copy(),
                            out_dir=str(tmp_path))
 
-        # uninterrupted
         t_full = fresh()
+        t_full.out_dir = str(tmp_path / "full")
         t_full.fit()
-        full_losses = [s["loss"] for s in t_full.history]
 
-        # interrupted after checkpoint at step 4, then resumed
         t_split = fresh()
-        t_split.fit()  # runs all 8 too but we simulate by re-running from ckpt
-
-        # rebuild trainer and resume from its step-4 checkpoint state
-        t_resume = fresh()
-        # manually run 4 steps exactly as fit() would (train + advance
-        # epoch), checkpoint, new trainer resumes
-        for step in range(1, 5):
-            t_resume.train_step(step)
-            t_resume.sampler.advance_epoch()
-        from torchzero.runtime.trainer import save_checkpoint
-        ckpt_path = str(tmp_path / "resume_ckpt.pkl")
-        save_checkpoint(ckpt_path, t_resume.model, t_resume.optimizer,
-                        step=4, config_dict=cfg_common,
-                        metrics={"history": t_resume.history,
-                                 "sampler_epoch": t_resume.sampler.epoch})
+        t_split.out_dir = str(tmp_path / "split")
+        checkpoint = t_split.fit(stop_after=4)
+        assert len(t_split.history) == 4
 
         t_resumed = fresh()
-        t_resumed.fit(resume_from=ckpt_path)
-        resumed_losses = ([h["loss"] for h in t_resumed.history[:4]]
-                          + [h["loss"] for h in t_resumed.history[4:]])
-        # steps 5..8 of resumed run must equal uninterrupted run
-        assert np.allclose(full_losses[4:], resumed_losses[-4:], atol=1e-5)
+        t_resumed.out_dir = str(tmp_path / "resumed")
+        t_resumed.fit(resume_from=checkpoint)
+        np.testing.assert_array_equal(
+            [h["loss"] for h in t_full.history],
+            [h["loss"] for h in t_resumed.history])
+        for name, value in t_full.model.state_dict().items():
+            np.testing.assert_array_equal(value, t_resumed.model.state_dict()[name])
 
     def test_checkpoint_contains_metadata(self, tmp_path):
         model = build()

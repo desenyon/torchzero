@@ -10,7 +10,7 @@ model:
 
 data:
   text: null              # replace with a path to a .txt corpus for real runs
-  val_fraction: 0.05
+  val_fraction: 0.25      # use a smaller fraction with a larger external corpus
 
 train:
   optimizer: adamw

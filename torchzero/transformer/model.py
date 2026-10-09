@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..nn.module import Module, Parameter
-from ..nn.layers import Linear, Embedding, RMSNorm, gelu
+from ..nn.module import Module
+from ..nn.layers import Linear, Embedding, RMSNorm, Dropout, gelu
+from ..autograd.engine import no_grad
 from ..tensor.tensor import Tensor
 
 
@@ -23,8 +24,20 @@ class TransformerConfig:
     def __init__(self, vocab_size, dim=128, n_layers=4, n_heads=4,
                  block_size=64, ffn_hidden=None, dropout=0.0,
                  tie_weights=True, norm_eps=1e-6):
+        for name, value in {"vocab_size": vocab_size, "dim": dim, "n_layers": n_layers,
+                            "n_heads": n_heads, "block_size": block_size}.items():
+            if not isinstance(value, (int, np.integer)) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         if dim % n_heads != 0:
             raise ValueError("dim must be divisible by n_heads")
+        if (dim // n_heads) % 2:
+            raise ValueError("RoPE requires an even head dimension")
+        if ffn_hidden is not None and (not isinstance(ffn_hidden, int) or ffn_hidden <= 0):
+            raise ValueError("ffn_hidden must be a positive integer")
+        if not 0 <= dropout < 1:
+            raise ValueError("dropout must be in [0, 1)")
+        if not np.isfinite(norm_eps) or norm_eps <= 0:
+            raise ValueError("norm_eps must be finite and positive")
         self.vocab_size = vocab_size
         self.dim = dim
         self.n_layers = n_layers
@@ -88,12 +101,13 @@ class CausalSelfAttention(Module):
         self.n_heads = config.n_heads
         self.head_dim = h
         self.scale = 1.0 / np.sqrt(h)
+        self.attn_dropout = Dropout(config.dropout, seed=None if seed is None else seed + 4)
 
     def forward(self, x: Tensor, cos_sin=None, cache=None, trace=None):
         """x: (B, T, dim).
 
         ``cache`` is an optional dict {"k": Tensor, "v": Tensor} holding this
-        layer's cached keys/values of shape (B, T_past, n_heads, head_dim);
+        layer's cached keys/values of shape (B, n_heads, T_past, head_dim);
         it is updated in place.
         """
         B, T, C = x.shape
@@ -134,7 +148,7 @@ class CausalSelfAttention(Module):
                            k=offset)
         scores = scores.masked_fill(~mask, -1e30)
         probs = scores.softmax(axis=-1)
-        attn_out = probs @ v_full                            # (B,H,T,Dh)
+        attn_out = self.attn_dropout(probs) @ v_full  # (B,H,T,Dh)
         out = attn_out.transpose(0, 2, 1, 3).reshape(B, T, C)
         out = self.proj(out)
 
@@ -178,11 +192,14 @@ class TransformerBlock(Module):
         self.norm_mlp = RMSNorm(config.dim, eps=config.norm_eps)
         self.mlp = FeedForward(config,
                                seed=None if seed is None else seed + 10)
+        self.attn_residual_dropout = Dropout(config.dropout, seed=None if seed is None else seed + 20)
+        self.mlp_residual_dropout = Dropout(config.dropout, seed=None if seed is None else seed + 21)
 
     def forward(self, x: Tensor, cos_sin=None, cache=None, trace=None):
         h = self.norm_attn(x)
-        x = x + self.attn(h, cos_sin=cos_sin, cache=cache, trace=trace)
-        x = x + self.mlp(self.norm_mlp(x), trace=trace)
+        x = x + self.attn_residual_dropout(
+            self.attn(h, cos_sin=cos_sin, cache=cache, trace=trace))
+        x = x + self.mlp_residual_dropout(self.mlp(self.norm_mlp(x), trace=trace))
         return x
 
 
@@ -214,6 +231,8 @@ class Transformer(Module):
         if isinstance(idx, Tensor):
             if idx.dtype.kind not in "iu":
                 raise TypeError("input indices must be integers")
+            if idx.ndim != 2:
+                raise ValueError("expected (B, T) index array")
             B, T = idx.shape
         else:
             arr = np.asarray(idx)
@@ -223,6 +242,8 @@ class Transformer(Module):
                 raise ValueError("expected (B, T) index array")
             B, T = arr.shape
             idx = Tensor(arr.astype(np.int64))
+        if B == 0 or T == 0:
+            raise ValueError("input batch and sequence must be non-empty")
         if T > self.config.block_size:
             raise ValueError(
                 f"sequence length {T} exceeds block size "
@@ -238,6 +259,10 @@ class Transformer(Module):
         pos_offset = 0
         if use_cache and self.kv_caches and "k" in self.kv_caches[0]:
             pos_offset = self.kv_caches[0]["k"].shape[2]
+        if pos_offset + T > self.config.block_size:
+            raise ValueError("cached sequence exceeds block size; clear or reset cache")
+        if use_cache and pos_offset and self.kv_caches[0]["k"].shape[0] != B:
+            raise ValueError("cached batch size mismatch; clear or reset cache")
         cos_full, sin_full = rope_cache(pos_offset + T, self.config.head_dim)
         cos = cos_full[pos_offset:]
         sin = sin_full[pos_offset:]
@@ -288,50 +313,73 @@ class Transformer(Module):
         self.kv_caches = None
 
     @staticmethod
-    def sample_next(logits_last, temperature=1.0, top_k=None,
-                     seed=None):
-        """Sample one next-token id from last-position logits (numpy array)."""
-        rng = np.random.default_rng(seed)
-        row = logits_last.astype(np.float64)
-        if temperature <= 0 or top_k == 1:
+    def sample_next(logits_last, temperature=1.0, top_k=None, seed=None, *, rng=None):
+        """Sample a token, optionally consuming an existing NumPy RNG stream."""
+        row = np.asarray(logits_last, dtype=np.float64)
+        if row.ndim != 1 or not row.size or not np.isfinite(row).all():
+            raise ValueError("expected a non-empty vector of finite logits")
+        if not np.isfinite(temperature) or temperature < 0:
+            raise ValueError("temperature must be finite and non-negative")
+        if top_k is not None and (not isinstance(top_k, (int, np.integer)) or top_k <= 0):
+            raise ValueError("top_k must be a positive integer")
+        if rng is not None and seed is not None:
+            raise ValueError("pass seed or rng, not both")
+        rng = np.random.default_rng(seed) if rng is None else rng
+        if temperature == 0 or top_k == 1:
             return int(row.argmax())
-        row = row / temperature
+        # Subtract before dividing to avoid overflow at small temperatures.
+        with np.errstate(over="ignore"):
+            row = (row - row.max()) / temperature
         if top_k is not None and top_k < row.size:
-            kth = np.sort(row)[-top_k]
-            row = np.where(row < kth, -np.inf, row)
-        row -= row.max()
+            # Stable ties retain the lower token IDs; exactly k survive.
+            keep = np.argsort(-row, kind="stable")[:top_k]
+            filtered = np.full_like(row, -np.inf)
+            filtered[keep] = row[keep]
+            row = filtered
         probs = np.exp(row)
         probs /= probs.sum()
         return int(rng.choice(row.size, p=probs))
 
     def generate(self, prompt_ids, max_new_tokens, temperature=1.0,
                  top_k=None, seed=None, use_kv_cache=True):
-        """Autoregressive generation. Deterministic when temperature<=0."""
-        ids = [int(i) for i in prompt_ids]
+        """Generate up to the remaining context capacity and restore modes.
+
+        One RNG is consumed across the call. Temporary KV caches are cleared
+        on exit. A full-context prompt or zero token budget is a no-op.
+        """
+        prompt = np.asarray(prompt_ids)
+        if prompt.ndim != 1 or not prompt.size:
+            raise ValueError("prompt must be a non-empty token vector")
+        if prompt.dtype.kind not in "iu":
+            raise TypeError("prompt token IDs must be integers")
+        if prompt.min() < 0 or prompt.max() >= self.config.vocab_size:
+            raise IndexError("prompt token out of vocabulary range")
+        if not isinstance(max_new_tokens, (int, np.integer)) or max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be a non-negative integer")
+        if not np.isfinite(temperature) or temperature < 0:
+            raise ValueError("temperature must be finite and non-negative")
+        if top_k is not None and (not isinstance(top_k, (int, np.integer)) or top_k <= 0):
+            raise ValueError("top_k must be a positive integer")
+        ids = prompt.tolist()
         if len(ids) > self.config.block_size:
             raise ValueError("prompt longer than block size")
-        self.eval()
-        if use_kv_cache:
-            logits, _ = self.forward([ids], use_cache=True, reset_cache=True)
-            for _ in range(max_new_tokens):
-                nxt = self.sample_next(logits[0, -1].data, temperature,
-                                       top_k, seed)
-                ids.append(nxt)
-                if len(ids) >= self.config.block_size:
-                    break
-                logits, _ = self.forward([[nxt]], use_cache=True,
-                                         reset_cache=False)
-            return ids
-        # uncached: full forward over growing context each step
-        for _ in range(max_new_tokens):
-            ctx = ids[-self.config.block_size:]
-            logits, _ = self.forward([ctx])
-            nxt = self.sample_next(logits[0, -1].data, temperature, top_k,
-                                   seed)
-            ids.append(nxt)
-            if len(ids) >= self.config.block_size:
-                break
-        return ids
+        count = min(max_new_tokens, self.config.block_size - len(ids))
+        rng = np.random.default_rng(seed)
+        with self.evaluating(), no_grad():
+            self.clear_cache()
+            try:
+                if not count:
+                    return ids
+                logits, _ = self.forward([ids], use_cache=use_kv_cache)
+                for step in range(count):
+                    nxt = self.sample_next(logits.data[0, -1], temperature, top_k, rng=rng)
+                    ids.append(nxt)
+                    if step + 1 < count:
+                        logits, _ = self.forward([[nxt]] if use_kv_cache else [ids],
+                                                 use_cache=use_kv_cache, reset_cache=False)
+                return ids
+            finally:
+                self.clear_cache()
 
     def num_parameters(self):
         return sum(int(p.data.size) for p in self.parameters())
