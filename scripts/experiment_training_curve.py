@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from torchzero.transformer import Transformer, TransformerConfig
 from torchzero.tokenizer import BPETokenizer
-from torchzero.data.dataset import CharStreamDataset, pack_sequences, \
+from torchzero.data.dataset import CharStreamDataset, pack_lm_sequences, \
     train_val_split
 from torchzero.runtime.trainer import Trainer
 
@@ -28,10 +28,10 @@ def main():
     tok = BPETokenizer().train(text, vocab_size=288)
     ids = tok.encode(text)
     tr_ids, va_ids = train_val_split(ids, 0.05)
-    tr_rows = pack_sequences(tr_ids, 64)
-    va_rows = pack_sequences(va_ids, 64)
-    if len(va_rows) == 0:
-        va_rows = pack_sequences(tr_ids[-256:], 64)
+    tr_rows = pack_lm_sequences(tr_ids, 64)
+    va_rows = pack_lm_sequences(va_ids, 64)
+    if not len(tr_rows) or not len(va_rows):
+        raise ValueError("corpus splits are too small for the configured context")
 
     model_cfg = {"vocab_size": tok.vocab_size, "dim": 96, "n_layers": 3,
                  "n_heads": 4, "block_size": 64}

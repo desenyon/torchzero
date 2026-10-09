@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.0 — numerical and training reliability (unreleased)
+
+- Correct tensor power, min, vector/batched matmul, negative-axis transpose,
+  duplicate-gather and differentiable axis-aware scatter-add gradients.
+- Add true next-token packing, a consuming resumable batch cursor, token-weighted
+  evaluation and validation for malformed training data/configuration.
+- Activate transformer dropout with persistent restorable RNG streams.
+- Separate checkpoint I/O from training; atomically save complete version-2
+  state with optimizer hyperparameters, scheduler, sampler, RNG and data identity.
+- Restore SGD momentum correctly, avoid AdamW decay without gradients, and
+  accept parameter iterators in gradient clipping. Apply warmup before updates.
+- Support graceful absolute-step pauses without changing the planned LR curve.
+- Read UTF-8 corpus paths relative to YAML; distinguish inline text, retain
+  resume tokenizers and verify corpus/tokenizer identity.
+- Run generation without graphs using one sampling RNG; restore modes, clear
+  caches, validate inputs and respect context capacity.
+- Add finite-difference, interrupted-training and real CLI regression coverage,
+  distribution smoke checks and Python 3.10/3.13 CI. Expand operational README.
+- Compatibility: v1 weights remain readable, but exact v1 training resume is
+  rejected. See README migration notes for changed targets, seeds and dropout.
+
 ## 0.1.0 — initial complete implementation
 
 ### Added

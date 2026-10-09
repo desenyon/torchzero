@@ -7,7 +7,7 @@ storage and primitive kernels); everything else is implemented in this package.
 from .tensor import Tensor, tensor, zeros, randn, arange, eye
 from .autograd import backward, no_grad, GradMode
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Tensor", "tensor", "zeros", "randn", "arange", "eye",

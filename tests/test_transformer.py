@@ -147,7 +147,8 @@ class TestKVCache:
         uncached = Transformer.__dict__["generate"](
             model, list(prompt), 6, temperature=0.0, use_kv_cache=False)
         # greedy argmax path is deterministic regardless of cache
-        assert cached[:len(prompt)] == uncached[:len(prompt)]
+        assert cached == uncached
+        assert len(cached) == len(prompt) + 6
 
     def test_cache_shapes(self):
         model = make_model(seed=4)

@@ -193,13 +193,15 @@ class Tensor:
         return _ensure_tensor(other) / self
 
     def __pow__(self, exponent):
-        if isinstance(exponent, Tensor):
-            return exponent.__rpow__(self)
+        if isinstance(exponent, Tensor) or not np.isscalar(exponent):
+            return _ensure_tensor(exponent).__rpow__(self)
         out_data = self.data ** exponent
         if not get_grad_mode() or not self.requires_grad:
             return Tensor(out_data)
 
         def bfn(g):
+            if exponent == 0:
+                return (np.zeros_like(self.data),)
             return (unbroadcast(g * exponent * self.data ** (exponent - 1),
                                 self.shape),)
 
@@ -208,16 +210,23 @@ class Tensor:
     def __rpow__(self, base):
         base_t = _ensure_tensor(base)
         out_data = base_t.data ** self.data
-        if not get_grad_mode():
+        parents = (base_t, self)
+        if not get_grad_mode() or not self._requires_any(parents):
             return Tensor(out_data)
 
         def bfn(g):
-            ln_b = np.log(np.where(base_t.data > 0, base_t.data, 1.0))
-            return (unbroadcast(g * out_data * ln_b, base_t.shape),
-                    unbroadcast(g * out_data / np.where(base_t.data != 0, base_t.data, 1.0), self.shape))
+            gb = ge = None
+            if base_t.requires_grad:
+                # x**0 is constant, including x=0; avoid evaluating 0**-1.
+                power = np.zeros_like(out_data)
+                np.power(base_t.data, self.data - 1, out=power,
+                         where=self.data != 0)
+                gb = unbroadcast(g * self.data * power, base_t.shape)
+            if self.requires_grad:
+                ge = unbroadcast(g * out_data * np.log(base_t.data), self.shape)
+            return gb, ge
 
-        return Tensor(out_data, self.requires_grad or base_t.requires_grad,
-                      _parents=(base_t, self), _backward_fn=bfn)
+        return Tensor(out_data, True, _parents=parents, _backward_fn=bfn)
 
     def __neg__(self):
         return self * -1.0
@@ -231,25 +240,22 @@ class Tensor:
 
         def bfn(g):
             a, b = self.data, other.data
-            if a.ndim == 1 and b.ndim == 1:      # vec @ vec -> scalar
-                return (g * b, g * a)
-            ga = None
-            gb = None
-            if a.ndim == 1:                       # vec @ mat
-                ga = (g @ b.T)
-                gb = np.outer(a, g) * np.ones_like(b)
-            elif b.ndim == 1:                     # mat @ vec
-                ga = np.outer(g, b) * np.ones_like(a)
-                gb = a.T @ g
-            elif a.ndim == 2 and b.ndim == 2:
-                ga = g @ b.T
-                gb = a.T @ g
-            else:                                 # batched (>=3d)
-                ga = g @ np.swapaxes(b, -1, -2)
-                gb = np.swapaxes(a, -1, -2) @ g
-                ga = unbroadcast(ga, a.shape)
-                gb = unbroadcast(gb, b.shape)
-            return (ga, gb)
+            # NumPy matmul promotes vectors to matrices and then removes the
+            # synthetic axes. Undo that removal before the common VJP.
+            am = a[np.newaxis, :] if a.ndim == 1 else a
+            bm = b[:, np.newaxis] if b.ndim == 1 else b
+            gm = g
+            if b.ndim == 1:
+                gm = np.expand_dims(gm, -1)
+            if a.ndim == 1:
+                gm = np.expand_dims(gm, -2)
+            ga = gm @ np.swapaxes(bm, -1, -2)
+            gb = np.swapaxes(am, -1, -2) @ gm
+            if a.ndim == 1:
+                ga = np.squeeze(ga, -2)
+            if b.ndim == 1:
+                gb = np.squeeze(gb, -1)
+            return unbroadcast(ga, a.shape), unbroadcast(gb, b.shape)
 
         return Tensor(out_data, True, _parents=parents, _backward_fn=bfn)
 
@@ -323,17 +329,7 @@ class Tensor:
         return Tensor(out_data, True, _parents=(self,), _backward_fn=bfn)
 
     def min(self, axis=None, keepdims=False):
-        neg = (-self).max(axis=axis, keepdims=keepdims)
-        out = Tensor(-neg.data)
-        if not neg._backward_fn:
-            return out
-
-        orig = neg._backward_fn
-
-        def bfn(g):
-            return tuple(-x for x in orig(-g))
-
-        return Tensor(out.data, True, _parents=neg._parents, _backward_fn=bfn)
+        return -((-self).max(axis=axis, keepdims=keepdims))
 
     # ------------------------------------------------------------- shape ops
     def transpose(self, *axes):
@@ -343,7 +339,7 @@ class Tensor:
         out_data = self.data.transpose(axes)
         if not get_grad_mode() or not self.requires_grad:
             return Tensor(out_data)
-        inv = np.argsort(axes)
+        inv = np.argsort([axis % self.ndim for axis in axes])
 
         def bfn(g):
             return (g.transpose(tuple(inv)),)
@@ -487,26 +483,54 @@ class Tensor:
     def gather(self, indices, axis=-1):
         """Gather elements along ``axis``. ``indices`` is an int Tensor of the
         same ndim. Gradient scatter-adds back to gathered source positions."""
-        idx = indices.data.astype(np.int64)
+        idx = _index_array(indices)
+        axis = _normalize_axis(axis, self.ndim)
         out_data = np.take_along_axis(self.data, idx, axis=axis)
         if not get_grad_mode() or not self.requires_grad:
             return Tensor(out_data)
+        coords = _axis_coordinates(idx, out_data.shape, axis)
 
         def bfn(g):
-            gfull = np.zeros_like(self.data)
-            np.put_along_axis(gfull, idx, g, axis=axis)
-            return (gfull,)
+            # Non-axis dimensions can broadcast in take_along_axis.
+            shape = list(out_data.shape)
+            shape[axis] = self.shape[axis]
+            gfull = np.zeros(shape, dtype=self.dtype)
+            np.add.at(gfull, coords, g)
+            return (unbroadcast(gfull, self.shape),)
 
         return Tensor(out_data, True, _parents=(self,), _backward_fn=bfn)
 
     def scatter_add(self, indices, src, axis=0):
-        """Scatter-add ``src`` values into this tensor at ``indices`` along
-        ``axis``. Used by embedding-style gathers in reverse."""
-        idx = indices.data.astype(np.int64)
-        src_arr = src.data if isinstance(src, Tensor) else np.asarray(src)
+        """Return a differentiable copy with source values added at indices.
+
+        Full-rank indices must match src and all non-scatter destination
+        dimensions. A 1-D index vector also supports whole-row scatter at
+        axis=0, preserving the original embedding-style API.
+        """
+        idx = _index_array(indices)
+        src = _ensure_tensor(src)
+        axis = _normalize_axis(axis, self.ndim)
+        if idx.ndim == 1 and self.ndim > 1 and axis == 0:
+            expected = (len(idx),) + self.shape[1:]
+            if src.shape != expected:
+                raise ValueError(f"src shape must be {expected}")
+            coords = (idx,)
+        else:
+            if idx.ndim != self.ndim or src.shape != idx.shape:
+                raise ValueError("indices and src must have matching destination rank and shape")
+            if any(idx.shape[d] != self.shape[d] for d in range(self.ndim) if d != axis):
+                raise ValueError("non-scatter dimensions must match destination")
+            coords = _axis_coordinates(idx, idx.shape, axis)
         out_data = self.data.copy()
-        np.add.at(out_data, idx, src_arr)
-        return Tensor(out_data, requires_grad=self.requires_grad)
+        np.add.at(out_data, coords, src.data)
+        parents = (self, src)
+        if not get_grad_mode() or not self._requires_any(parents):
+            return Tensor(out_data)
+
+        def bfn(g):
+            return g.copy(), g[coords]
+
+        return Tensor(out_data, True, _parents=parents, _backward_fn=bfn)
 
     def masked_fill(self, mask, value):
         """``mask`` is a boolean array/Tensor; filled positions have zero
@@ -613,6 +637,25 @@ class Tensor:
     def backward(self, grad=None, retain_graph=False):
         from ..autograd.engine import backward as engine_backward
         engine_backward(self, grad=grad, retain_graph=retain_graph)
+
+
+def _normalize_axis(axis, ndim):
+    if not isinstance(axis, (int, np.integer)) or not -ndim <= axis < ndim:
+        raise ValueError(f"axis {axis} out of bounds for rank {ndim}")
+    return axis % ndim
+
+
+def _index_array(indices):
+    idx = indices.data if isinstance(indices, Tensor) else np.asarray(indices)
+    if idx.dtype.kind not in "iu":
+        raise TypeError("indices must be integers")
+    return idx.copy()
+
+
+def _axis_coordinates(indices, shape, axis):
+    return tuple(np.broadcast_to(indices, shape) if d == axis else
+                 np.arange(size).reshape((1,) * d + (size,) + (1,) * (len(shape) - d - 1))
+                 for d, size in enumerate(shape))
 
 
 def _ensure_tensor(value):

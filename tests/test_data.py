@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from torchzero.data import (train_val_split, pack_sequences, BatchSampler,
+from torchzero.data import (train_val_split, pack_sequences, pack_lm_sequences, BatchSampler,
                             get_batch, CharStreamDataset)
 from torchzero.tokenizer import BPETokenizer
 
@@ -35,10 +35,10 @@ class TestSplitPack:
 
 class TestBatching:
     def test_get_batch_target_is_next_token(self):
-        rows = pack_sequences(list(range(10)), 5)
+        rows = pack_lm_sequences(list(range(11)), 5)
         x, y = get_batch(rows, np.array([0]))
         assert np.allclose(x[0], [0, 1, 2, 3, 4])
-        assert np.allclose(y[0], [1, 2, 3, 4, 0])
+        assert np.allclose(y[0], [1, 2, 3, 4, 5])
 
     def test_sampler_deterministic(self):
         s1 = BatchSampler(10, 3, seed=42)
@@ -79,8 +79,8 @@ class TestTokenizationPipeline:
         tok = BPETokenizer().train(CharStreamDataset.TEXT, vocab_size=280)
         ids = tok.encode(CharStreamDataset.TEXT)
         tr, va = train_val_split(ids, 0.1)
-        rows_tr = pack_sequences(tr, 16)
-        rows_va = pack_sequences(va, 16)
+        rows_tr = pack_lm_sequences(tr, 16)
+        rows_va = pack_lm_sequences(va, 16)
         sampler = BatchSampler(len(rows_tr), 4, seed=1)
         batches = list(sampler)
         x, y = get_batch(rows_tr, batches[0])

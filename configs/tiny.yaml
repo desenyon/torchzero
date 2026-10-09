@@ -10,7 +10,7 @@ model:
 
 data:
   text: null              # null -> built-in deterministic dataset
-  val_fraction: 0.1
+  val_fraction: 0.15      # enough for a full 64+1-token validation row
 
 train:
   optimizer: adamw

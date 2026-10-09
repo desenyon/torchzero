@@ -32,6 +32,8 @@ class Optimizer:
 
     def state_dict(self):
         return {
+            "optimizer": type(self).__name__,
+            "hyperparameters": {key: getattr(self, key) for key in self._hyperparameters},
             "param_state": [
                 {k: (v.copy() if isinstance(v, np.ndarray) else v)
                  for k, v in state.items()}
@@ -40,12 +42,31 @@ class Optimizer:
         }
 
     def load_state_dict(self, sd):
+        if sd.get("optimizer", type(self).__name__) != type(self).__name__:
+            raise ValueError("optimizer type mismatch")
         states = sd["param_state"]
         current = self._state_list()
-        assert len(states) == len(current), "optimizer state count mismatch"
+        if len(states) != len(current):
+            raise ValueError("optimizer state count mismatch")
         for state, saved in zip(current, states):
-            for k, v in saved.items():
-                state[k] = v.copy() if isinstance(v, np.ndarray) else v
+            if set(state) != set(saved):
+                raise ValueError("optimizer state keys mismatch")
+            for key, value in saved.items():
+                if np.asarray(value).shape != np.asarray(state[key]).shape:
+                    raise ValueError(f"optimizer buffer shape mismatch: {key}")
+        hyper = sd.get("hyperparameters", {})
+        if hyper and set(hyper) != set(self._hyperparameters):
+            raise ValueError("optimizer hyperparameter mismatch")
+        for state, saved in zip(current, states):
+            for key, value in saved.items():
+                # _state_list may construct temporary dicts; mutate the real
+                # buffers in place so SGD's velocity is actually restored.
+                if isinstance(state[key], np.ndarray):
+                    state[key][...] = value
+                else:
+                    state[key] = value
+        for key, value in hyper.items():
+            setattr(self, key, value)
 
     def _state_list(self):
         raise NotImplementedError
@@ -55,6 +76,8 @@ class Optimizer:
 
 
 class SGD(Optimizer):
+    _hyperparameters = ("lr", "momentum", "weight_decay", "dampening", "nesterov")
+
     def __init__(self, params, lr, momentum=0.0, weight_decay=0.0,
                  dampening=0.0, nesterov=False):
         super().__init__(params)
@@ -88,10 +111,14 @@ class SGD(Optimizer):
 
 
 class Adam(Optimizer):
+    _hyperparameters = ("lr", "beta1", "beta2", "eps", "weight_decay")
+
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
                  weight_decay=0.0, amsgrad=False):
         super().__init__(params)
         self.lr = lr
+        if amsgrad:
+            raise ValueError("amsgrad is not implemented; use standard Adam or AdamW")
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.weight_decay = weight_decay
@@ -104,12 +131,8 @@ class Adam(Optimizer):
                [{"t": np.array(self.t)}]
 
     def load_state_dict(self, sd):
-        states = sd["param_state"]
-        per_param = len(states) - 1
-        for i in range(per_param):
-            self._m[i] = states[i]["m"].copy()
-            self._v[i] = states[i]["v"].copy()
-        self.t = int(states[per_param]["t"])
+        super().load_state_dict(sd)
+        self.t = int(sd["param_state"][-1]["t"])
 
     def step(self):
         self.t += 1
@@ -140,7 +163,8 @@ class AdamW(Adam):
         wd = self.weight_decay
         if wd:
             for p in self.params:
-                p.data -= self.lr * wd * p.data
+                if p.grad is not None:
+                    p.data -= self.lr * wd * p.data
         # run the pure Adam update without its own weight decay
         saved_wd = self.weight_decay
         self.weight_decay = 0.0
@@ -151,6 +175,7 @@ class AdamW(Adam):
 def clip_grad_norm(params, max_norm):
     """Global-norm gradient clipping across parameters. Returns the total norm
     before clipping."""
+    params = list(params)
     total_sq = 0.0
     grads = []
     for p in params:
@@ -181,6 +206,17 @@ class LambdaLR:
     def step(self):
         self.last_step += 1
         self.optimizer.lr = self.base_lr * self.lr_lambda(self.last_step)
+
+    def state_dict(self):
+        return {"base_lr": self.base_lr, "last_step": self.last_step,
+                "lr": self.optimizer.lr}
+
+    def load_state_dict(self, state):
+        if not isinstance(state["last_step"], int) or state["last_step"] < 0:
+            raise ValueError("invalid scheduler step")
+        self.base_lr = float(state["base_lr"])
+        self.last_step = state["last_step"]
+        self.optimizer.lr = float(state["lr"])
 
 
 def warmup_cosine(step, warmup_steps, total_steps, min_ratio=0.05):
